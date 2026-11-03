@@ -52,7 +52,8 @@ def _resolve_config_file() -> Path:
 # route except the static shell needs the token (see dashboard_auth).
 app = FastAPI(title="Harvey Dashboard", docs_url=None, redoc_url=None, openapi_url=None)
 token_store = auth.TokenStore(TOKEN_FILE)
-app.add_middleware(auth.DashboardGuard, store=token_store)
+public_origin = auth.PublicOrigin()
+app.add_middleware(auth.DashboardGuard, store=token_store, public=public_origin)
 
 # Harvey process tracking
 _harvey_process: subprocess.Popen | None = None
@@ -2717,6 +2718,26 @@ def dashboard_url(host: str = "127.0.0.1", port: int = 5555) -> str:
     return f"http://{name}:{port}/#token={token_store.get()}"
 
 
+def configure_public_origin() -> str | None:
+    """Read HARVEY_DASHBOARD_ORIGIN (environment, then .env) into the guard.
+
+    It names an https:// hostname that a tunnel on this machine (cloudflared,
+    for one) forwards to the loopback port. The server still binds loopback
+    only; put an access gate such as Cloudflare Access in front of the name.
+    Returns the public unlock link, or None when unset."""
+    value = os.environ.get("HARVEY_DASHBOARD_ORIGIN") or _read_env_file().get(
+        "HARVEY_DASHBOARD_ORIGIN", "")
+    try:
+        public_origin.host = auth.parse_public_origin(value)
+    except ValueError as e:
+        public_origin.host = None
+        raise DashboardSetupError(f"HARVEY_DASHBOARD_ORIGIN {e}, for example "
+                                  "https://harvey.example.com") from e
+    if public_origin.host is None:
+        return None
+    return f"https://{public_origin.host}/#token={token_store.get()}"
+
+
 def start_dashboard(host: str = "127.0.0.1", port: int = 5555):
     """Start the dashboard server (loopback only, token required)."""
     import uvicorn
@@ -2724,10 +2745,14 @@ def start_dashboard(host: str = "127.0.0.1", port: int = 5555):
     try:
         bind = _check_loopback_bind(host)
         url = dashboard_url(host, port)
+        public_url = configure_public_origin()
     except (DashboardSetupError, auth.TokenError) as e:
         raise DashboardSetupError(str(e)) from e
 
     print(f"\n  Harvey Dashboard running. Open this link to unlock it:\n\n    {url}\n")
+    if public_url:
+        print(f"  Through {public_origin.host} (keep an access gate in front of it):\n\n"
+              f"    {public_url}\n")
     print(f"  The token is stored in {token_store.path} (owner-only). Keep the link")
     print("  private; anyone with it can use the dashboard. Press Ctrl+C to stop.\n")
     if os.name == "nt":

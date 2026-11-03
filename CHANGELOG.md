@@ -9,6 +9,12 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Dashboard on your own domain (opt-in).** `HARVEY_DASHBOARD_ORIGIN=https://<name>`
+  lets a reverse proxy on the same machine serve the dashboard on that hostname.
+  It still binds loopback only and still needs the token; only that exact host
+  and `https://` origin are added, and a malformed value refuses to start.
+  `harvey dashboard --url` prints the domain link too.
+
 - **Company fit and the company register.** The Companies tab now sorts by a
   0-100 fit score worked out from what Harvey already holds: the ICP sector
   match, a contact with a target title, the best email found, and an open

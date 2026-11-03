@@ -8,9 +8,13 @@ every request passes, in order:
 1. Host: one Host header naming a loopback address (``localhost``,
    127.0.0.0/8, ``[::1]``) with an optional port. Anything else, including a
    rebinding name that resolves to 127.0.0.1, is refused before the token is
-   looked at.
+   looked at. The one opt-in exception is a public origin the operator set
+   (``HARVEY_DASHBOARD_ORIGIN``, an ``https://`` name served by a tunnel such
+   as cloudflared running on this machine): its exact hostname is accepted
+   too. The server still binds loopback only, so the tunnel is the only way in.
 2. Browser provenance: a request carrying ``Origin`` must come from exactly
-   this origin, and ``Sec-Fetch-Site`` must be ``same-origin`` or ``none``.
+   this origin (``https://<name>`` for the public one), and ``Sec-Fetch-Site``
+   must be ``same-origin`` or ``none``.
    (A top-level navigation to ``/`` is the one exception: the shell carries
    no data.) No CORS headers are ever sent, so preflights fail.
 3. Public shell: only ``GET``/``HEAD`` of ``/`` and ``/static/*`` (HTML, CSS,
@@ -274,6 +278,38 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+_DNS_NAME_RE = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
+
+
+def parse_public_origin(value: str) -> str | None:
+    """The public hostname from ``https://<name>``, None when unset.
+
+    Only a bare https origin with a DNS name is accepted: no port, path,
+    query, user info, IP literal or loopback name. Anything else raises
+    ValueError, so a typo locks the dashboard to loopback instead of
+    loosening it."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    prefix = "https://"
+    if not value.lower().startswith(prefix):
+        raise ValueError("must start with https://")
+    name = value[len(prefix):].rstrip("/").lower()
+    if not _DNS_NAME_RE.fullmatch(name):
+        raise ValueError("must be https:// followed by a hostname only "
+                         "(no port, path or IP address)")
+    if is_loopback(name):
+        raise ValueError("must be a public hostname, not localhost")
+    return name
+
+
+class PublicOrigin:
+    """The operator's public hostname for the dashboard, or None (loopback only)."""
+
+    def __init__(self):
+        self.host: str | None = None
+
+
 def is_public_path(method: str, path: str) -> bool:
     if method not in ("GET", "HEAD"):
         return False
@@ -303,9 +339,10 @@ class DashboardGuard:
     """ASGI middleware applying the checks in the module docstring to every
     request, and the security headers to every response."""
 
-    def __init__(self, app, store: TokenStore):
+    def __init__(self, app, store: TokenStore, public: PublicOrigin | None = None):
         self.app = app
         self.store = store
+        self.public = public or PublicOrigin()
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "lifespan":
@@ -340,10 +377,13 @@ class DashboardGuard:
         # 1. Host, before anything else.
         hosts = headers.get("host", [])
         host = parse_host(hosts[0]) if len(hosts) == 1 else None
-        if host is None or not is_loopback(host):
+        host_header = hosts[0].lower() if len(hosts) == 1 else ""
+        public_host = self.public.host
+        via_public = public_host is not None and host_header == public_host
+        if host is None or not (is_loopback(host) or via_public):
             return await deny(400, "bad_host",
                               "This dashboard only answers to localhost / 127.0.0.1.")
-        host_header = hosts[0].lower()
+        expected_origin = f"https://{public_host}" if via_public else f"http://{host_header}"
 
         # 2. Browser provenance.
         public = is_public_path(method, path)
@@ -351,7 +391,7 @@ class DashboardGuard:
                       and headers.get("sec-fetch-mode", [""])[0] == "navigate"
                       and headers.get("sec-fetch-dest", [""])[0] == "document")
         origins = headers.get("origin", [])
-        if origins and (len(origins) != 1 or origins[0].lower() != f"http://{host_header}"):
+        if origins and (len(origins) != 1 or origins[0].lower() != expected_origin):
             if not navigation:
                 return await deny(403, "cross_origin", "Cross-origin requests are refused.")
         site = headers.get("sec-fetch-site", [])
