@@ -45,6 +45,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(dash, "PID_FILE", tmp_path / "data" / "harvey.pid")
     monkeypatch.setattr(dash, "LOG_FILE", tmp_path / "data" / "harvey.log")
     dash.token_store.configure(tmp_path / "data" / "dashboard-token")
+    monkeypatch.delenv("HARVEY_DASHBOARD_ORIGIN", raising=False)
+    monkeypatch.setattr(dash.public_origin, "host", None)
     spawned = []
 
     class NoPopen:
@@ -708,6 +710,72 @@ def test_cli_dashboard_refuses_and_prints_links(env, monkeypatch, capsys):
     args = type("A", (), {"host": "127.0.0.1", "port": 5555, "url": True})()
     cli.cmd_dashboard(args)
     assert capsys.readouterr().out.strip() == f"http://127.0.0.1:5555/#token={env['token']}"
+
+
+# ── Public origin (HARVEY_DASHBOARD_ORIGIN) ──
+
+PUBLIC = "dash.example.com"
+
+
+@pytest.mark.parametrize("value", [
+    "http://dash.example.com", "dash.example.com", "https://dash.example.com:8443",
+    "https://dash.example.com/path", "https://dash.example.com?x=1", "https://user@dash.example.com",
+    "https://127.0.0.1", "https://[::1]", "https://localhost", "https://10.0.0.5",
+    "https://dash.example.com#x", "https://-bad.example.com", "https://dash",
+])
+def test_malformed_public_origins_are_refused(env, monkeypatch, value):
+    import uvicorn
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: pytest.fail("must not start"))
+    monkeypatch.setenv("HARVEY_DASHBOARD_ORIGIN", value)
+    with pytest.raises(dash.DashboardSetupError, match="HARVEY_DASHBOARD_ORIGIN"):
+        dash.start_dashboard()
+    assert dash.public_origin.host is None
+
+
+def test_public_origin_is_read_from_env_file_and_printed(env, monkeypatch, capsys):
+    import uvicorn
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **k: calls.append(k))
+    dash.ENV_FILE.write_text(f"HARVEY_DASHBOARD_ORIGIN=https://{PUBLIC.upper()}/\n")
+    dash.start_dashboard()
+    out = capsys.readouterr().out
+    assert f"https://{PUBLIC}/#token={env['token']}" in out
+    assert calls[0]["host"] == "127.0.0.1"  # still binds loopback only
+
+
+def test_public_origin_accepts_only_its_exact_host_and_origin(env):
+    dash.public_origin.host = PUBLIC
+    bearer = {"Authorization": f"Bearer {env['token']}"}
+    with TestClient(dash.app, base_url=f"https://{PUBLIC}") as c:
+        same = {"Origin": f"https://{PUBLIC}", "Sec-Fetch-Site": "same-origin"}
+        assert c.get("/api/companies", headers={**bearer, **same}).status_code == 200
+        assert c.get("/api/companies", headers=bearer).status_code == 200
+        assert c.get("/").status_code == 200
+        # The token is still required through the public name.
+        assert c.get("/api/companies").status_code == 401
+        for origin in (f"http://{PUBLIC}", "https://evil.example", f"https://{PUBLIC}.evil.example"):
+            r = c.post("/api/sending/pause", headers={**bearer, "Origin": origin})
+            assert r.status_code == 403, origin
+        for host in (f"{PUBLIC}:443", f"{PUBLIC}:5555", f"x.{PUBLIC}", f"{PUBLIC}.evil.example"):
+            assert c.get("/api/companies", headers={**bearer, "Host": host}).status_code == 400
+    # Loopback keeps working alongside it, with its own origin.
+    with TestClient(dash.app, base_url=ORIGIN, headers=bearer) as c:
+        assert c.get("/api/companies", headers={"Origin": ORIGIN}).status_code == 200
+        assert c.get("/api/companies", headers={"Origin": f"https://{PUBLIC}"}).status_code == 403
+
+
+def test_public_host_is_refused_when_not_configured(env):
+    with TestClient(dash.app, base_url=f"https://{PUBLIC}") as c:
+        r = c.get("/api/companies", headers={"Authorization": f"Bearer {env['token']}"})
+        assert r.status_code == 400
+
+
+def test_cli_url_prints_the_public_link_too(env, monkeypatch, capsys):
+    import harvey.cli as cli
+    monkeypatch.setenv("HARVEY_DASHBOARD_ORIGIN", f"https://{PUBLIC}")
+    cli.cmd_dashboard(type("A", (), {"host": "127.0.0.1", "port": 5555, "url": True})())
+    assert capsys.readouterr().out.split() == [f"http://127.0.0.1:5555/#token={env['token']}",
+                                               f"https://{PUBLIC}/#token={env['token']}"]
 
 
 def _free_port():

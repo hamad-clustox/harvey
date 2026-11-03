@@ -173,7 +173,8 @@ def cmd_train(args):
 
 def cmd_dashboard(args):
     """Launch the local web dashboard."""
-    from harvey.dashboard import DashboardSetupError, dashboard_url, start_dashboard
+    from harvey.dashboard import (DashboardSetupError, configure_public_origin, dashboard_url,
+                                  start_dashboard)
     from harvey.dashboard_auth import TokenError
 
     if not 1 <= args.port <= 65535:
@@ -184,6 +185,9 @@ def cmd_dashboard(args):
         if getattr(args, "url", False):
             # The unlock link for an already-running dashboard.
             print(dashboard_url(host=args.host, port=args.port))
+            public_url = configure_public_origin()
+            if public_url:
+                print(public_url)
             return
         start_dashboard(host=args.host, port=args.port)
     except (DashboardSetupError, TokenError) as e:
