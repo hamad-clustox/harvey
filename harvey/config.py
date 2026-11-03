@@ -740,8 +740,10 @@ class EnvConfig(BaseModel):
     serper_api_key: str = ""
     scavio_api_key: str = ""
     tinyfish_api_key: str = ""
+    emailverify_api_key: str = ""   # EmailVerify.io: the default verifier
     reoon_api_key: str = ""
     zerobounce_api_key: str = ""
+    inboxwarm_api_key: str = ""     # InboxWarm.ai: the default warmup service
     # Native mail providers (channels.email.provider: gmail | smtp)
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
@@ -858,8 +860,10 @@ def load_env() -> EnvConfig:
         serper_api_key=os.getenv("SERPER_API_KEY", "").strip(),
         scavio_api_key=os.getenv("SCAVIO_API_KEY", "").strip(),
         tinyfish_api_key=os.getenv("TINYFISH_API_KEY", "").strip(),
+        emailverify_api_key=os.getenv("EMAILVERIFY_API_KEY", "").strip(),
         reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
         zerobounce_api_key=os.getenv("ZEROBOUNCE_API_KEY", "").strip(),
+        inboxwarm_api_key=os.getenv("INBOXWARM_API_KEY", "").strip(),
         gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
         gmail_client_secret=os.getenv("GMAIL_CLIENT_SECRET", "").strip(),
         smtp_host=os.getenv("SMTP_HOST", "").strip(),

@@ -501,6 +501,47 @@ async def derive_pattern(
 
 # ── Verification channels ──
 
+EMAILVERIFY_URL = "https://app.emailverify.io/api/v1/validate"
+
+
+async def verify_emailverify(email: str, api_key: str) -> Optional[dict]:
+    """EmailVerify.io (Clustox's verifier) — Harvey's default, tried first.
+
+    Returns {'status': ..., 'catch_all': bool} or None if unavailable.
+    EmailVerify 'status' values: valid / invalid / catch_all / do_not_mail /
+    unknown / role_based / skipped, with a 'sub_status' such as permitted,
+    mailbox_not_found, disposable, mailbox_quota_exceeded or blocked_domain.
+    'do_not_mail' (disposable, full or blocked mailboxes) is never sent; a
+    'role_based' address (info@, sales@) counts as valid only when its
+    sub_status is 'permitted'.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            resp = await client.get(EMAILVERIFY_URL, params={"key": api_key, "email": email})
+    except httpx.HTTPError as e:
+        logger.debug(f"EmailVerify request failed for {email}: {e}")
+        return None
+    if resp.status_code in (401, 402, 403):
+        # A wrong key or no credits would otherwise turn every address into a
+        # silent "guess"; say so (never the key itself).
+        logger.warning(f"EmailVerify.io refused the request ({resp.status_code}): check "
+                       "EMAILVERIFY_API_KEY and the account's credits.")
+        return None
+    if resp.status_code != 200:
+        logger.debug(f"EmailVerify returned {resp.status_code} for {email}")
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    status = str(data.get("status") or "").lower()
+    sub = str(data.get("sub_status") or "").lower()
+    if status == "role_based":
+        status = "valid" if sub == "permitted" else "unknown"
+    return {"status": status, "catch_all": status == "catch_all"}
+
 async def verify_reoon(email: str, api_key: str) -> Optional[dict]:
     """Reoon email-verifier — generous free tier, good catch-all flagging.
 
@@ -633,7 +674,8 @@ def _status_from_verdict(verdict: dict) -> Optional[str]:
     status = verdict.get("status", "")
     if status in ("valid", "deliverable", "safe"):
         return "verified"
-    if status in ("invalid", "undeliverable", "disabled", "disposable", "spamtrap"):
+    if status in ("invalid", "undeliverable", "disabled", "disposable", "spamtrap",
+                  "do_not_mail"):
         return "invalid"
     if status in ("catch_all", "catch-all", "accept_all"):
         return "risky"
@@ -646,6 +688,28 @@ async def _verify_candidate(email: str, mx_type: str, env) -> tuple[Optional[str
     Returns (status_or_None, catch_all_seen). Order is chosen so scarce
     paid-ish credits are spent only where they actually resolve the domain.
     """
+    emailverify_key = getattr(env, "emailverify_api_key", "") if env else ""
+    if not emailverify_key:
+        return await _verify_fallbacks(email, mx_type, env)
+
+    # EmailVerify.io (Clustox's own verifier) goes first everywhere. A clear
+    # valid / invalid verdict is final. A catch-all is "risky" unless another
+    # configured verifier can settle it (ZeroBounce cracks many Google /
+    # Microsoft catch-alls); an unknown falls through to the others.
+    verdict = await verify_emailverify(email, emailverify_key)
+    status = _status_from_verdict(verdict) if verdict else None
+    if status is not None and status != "risky":
+        return status, False
+    fallback, catch_all_seen = await _verify_fallbacks(email, mx_type, env)
+    if fallback is not None:
+        return fallback, catch_all_seen or status == "risky"
+    if status == "risky":
+        return "risky", True
+    return None, catch_all_seen
+
+
+async def _verify_fallbacks(email: str, mx_type: str, env) -> tuple[Optional[str], bool]:
+    """The verifiers behind EmailVerify.io: ZeroBounce, Reoon, SMTP, Hunter."""
     reoon_key = getattr(env, "reoon_api_key", "") if env else ""
     zerobounce_key = getattr(env, "zerobounce_api_key", "") if env else ""
     hunter_key = _hunter_api_key()

@@ -173,9 +173,11 @@ def _health(**kw):
     return ti.MailboxHealth(**base)
 
 
-def test_not_connected_recommends_trulyinbox_with_the_link():
+def test_not_connected_recommends_inboxwarm():
+    from harvey.integrations import inboxwarm as iw
     c = d.check_warmup_service(None, today=TODAY)
-    assert ti.AFFILIATE_URL in c.detail and "harvey trulyinbox connect" in c.detail
+    assert iw.SIGNUP_URL in c.detail and "harvey inboxwarm connect" in c.detail
+    assert ti.AFFILIATE_URL not in c.detail
     assert c.status == d.INFO
 
 

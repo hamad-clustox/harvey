@@ -380,9 +380,12 @@
     <div class="settings-row">
       <div>
         <h3>Verifiers</h3>
-        <p class="desc">Add at least one so found emails get verified. Without any, addresses stay <span class="email-tag guess" style="margin:0">guess</span> and are never sent. Reoon has the best free tier (600 a month).</p>
+        <p class="desc">Add at least one so found emails get verified. Without any, addresses stay <span class="email-tag guess" style="margin:0">guess</span> and are never sent. EmailVerify.io is the default and is tried first; the others are optional fallbacks.</p>
       </div>
       <div class="fields">
+        <div class="form-group"><label class="form-label" for="emailverify-key">EmailVerify.io API key <span id="emailverify-status" class="email-tag"></span></label>
+          <div class="with-btn"><input type="password" class="form-input" id="emailverify-key" placeholder="Default verifier — app.emailverify.io/api-setup" autocomplete="off">
+            <button class="btn btn-secondary" onclick="toggleVisibility('emailverify-key')">Show</button></div></div>
         <div class="form-group"><label class="form-label" for="reoon-key">Reoon API key <span id="reoon-status" class="email-tag"></span></label>
           <div class="with-btn"><input type="password" class="form-input" id="reoon-key" placeholder="600 free/mo — reoon.com/email-verifier" autocomplete="off">
             <button class="btn btn-secondary" onclick="toggleVisibility('reoon-key')">Show</button></div></div>

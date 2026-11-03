@@ -237,12 +237,13 @@ async def get_setup_status():
     })
 
     # 4. Email verification (needed for addresses to be sendable, not 'guess')
-    verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
+    verifier_set = (_has("EMAILVERIFY_API_KEY") or _has("REOON_API_KEY")
+                    or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY"))
     checks.append({
         "id": "verifier", "label": "Email verification key",
         "done": verifier_set,
         "required": True,
-        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Settings — "
+        "help": "Add an EmailVerify.io key in Settings (or Reoon, ZeroBounce, Hunter) — "
                 "without one, found emails stay 'guess' and are never sent.",
     })
 
@@ -293,7 +294,8 @@ async def get_setup_status():
         "help": "Optional. For JavaScript-rendered website crawling during training.",
     })
 
-    # 9. Warmup service: TrulyInbox connected, or another service the user named
+    # 9. Warmup service: InboxWarm (or TrulyInbox) connected, or another service
+    from harvey.integrations import inboxwarm as iw
     from harvey.integrations import trulyinbox as ti
     try:
         state = _state()
@@ -301,19 +303,21 @@ async def get_setup_status():
         choice = await ti.get_choice(state)
     except Exception:
         choice = ""
-    if _has("TRULYINBOX_API_KEY"):
+    connected_to = ("InboxWarm" if _has("INBOXWARM_API_KEY")
+                    else "TrulyInbox" if _has("TRULYINBOX_API_KEY") else "")
+    if connected_to:
         choice = "connected"
     checks.append({
         "id": "warmup_service",
-        "label": {"connected": "Warmup: TrulyInbox connected",
+        "label": {"connected": f"Warmup: {connected_to or 'warmup service'} connected",
                   "other": "Warmup: your own warmup service"}.get(choice, "Warm up your mailbox"),
         "done": bool(choice),
         # Instantly warms its own accounts, so there it's a suggestion, not a step.
         "required": provider != "instantly",
         "help": ("A new mailbox needs 2-4 weeks of warmup before cold email, and warmup "
-                 "keeps it out of spam after that. We recommend TrulyInbox: connect it and "
+                 "keeps it out of spam after that. We recommend InboxWarm: connect it and "
                  "Harvey shows whether your mailbox is warmed."),
-        "link": ti.AFFILIATE_URL,
+        "link": iw.SIGNUP_URL,
     })
 
     required_checks = [c for c in checks if c["required"]]
@@ -350,7 +354,7 @@ async def get_settings():
         "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
         "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
         "M365_CLIENT_ID", "M365_TENANT_ID",
-        "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
+        "EMAILVERIFY_API_KEY", "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
     ]
     for key in all_keys:
         if key not in env_vars:
@@ -387,6 +391,7 @@ async def get_settings():
         "m365_client_id": env_vars.get("M365_CLIENT_ID", ""),
         "m365_tenant_id": env_vars.get("M365_TENANT_ID", ""),
         "m365_authorized": (PROJECT_ROOT / "data" / "m365_token.json").is_file(),
+        "emailverify_api_key_set": is_set("EMAILVERIFY_API_KEY"),
         "reoon_api_key_set": is_set("REOON_API_KEY"),
         "zerobounce_api_key_set": is_set("ZEROBOUNCE_API_KEY"),
         "hunter_api_key_set": is_set("HUNTER_API_KEY"),
@@ -410,7 +415,7 @@ async def save_env_settings(request: Request):
                      "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
                      "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
                      "M365_CLIENT_ID", "M365_TENANT_ID",
-                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY"]:
+                     "EMAILVERIFY_API_KEY", "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY"]:
             if key in data and data[key] is not None:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, (str, int, float)):
@@ -433,6 +438,46 @@ async def save_env_settings(request: Request):
                 logger.warning("Failed to write .env: %s", e)
                 return {"success": False, "message": "Could not write .env file."}
     return {"success": True}
+
+
+@app.post("/api/inboxwarm/connect")
+async def inboxwarm_connect(request: Request):
+    """Check an InboxWarm key against the sending mailbox, then save it to .env."""
+    from harvey import deliverability as d
+    from harvey.integrations import inboxwarm as iw
+    from harvey.integrations import trulyinbox as ti
+    try:
+        data = await request.json()
+    except Exception:
+        data = None
+    key = data.get("key") if isinstance(data, dict) else None
+    if not isinstance(key, str) or not key.strip() or len(key) > 512:
+        return JSONResponse({"success": False, "message": "Paste your InboxWarm API key."},
+                            status_code=400)
+    key = key.strip()
+    try:
+        from harvey.config import load_config
+        config = load_config()
+        address, warmup = ti.sending_address(config), config.channels.email.warmup
+    except Exception:
+        address, warmup = "", None
+    if not address:
+        return JSONResponse({"success": False, "message": iw.NO_ADDRESS}, status_code=400)
+    try:
+        health = await iw.InboxWarm(key).mailbox_health(address)
+    except iw.InboxWarmError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=400)
+    async with _env_lock:
+        try:
+            _write_env_file({"INBOXWARM_API_KEY": key})
+        except Exception as e:
+            logger.warning("Failed to write .env: %s", e)
+            return {"success": False, "message": "Could not write .env file."}
+    state = _state()
+    await state.init_db()
+    await ti.set_choice(state, "connected")
+    return {"success": True,
+            "message": d.check_warmup_service(health, warmup, service=iw.NAME).detail}
 
 
 @app.post("/api/trulyinbox/connect")
