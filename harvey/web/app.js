@@ -698,35 +698,35 @@ async function loadSetupStatus() {
     '</div>';
 }
 
-// The warmup step: get TrulyInbox, paste its key, or say you use another service.
+// The warmup step: get InboxWarm, paste its key, or say you use another service.
 function warmupServiceActions(c) {
   return '<div class="btn-group warmup-actions">' +
       '<a class="btn btn-primary btn-sm" href="' + safeHref(c.link) + '" target="_blank" ' +
-        'rel="noopener sponsored">Get TrulyInbox</a>' +
-      '<input class="form-input" id="trulyinbox-key" type="password" autocomplete="off" ' +
-        'placeholder="Paste your TrulyInbox API key" aria-label="TrulyInbox API key" ' +
-        'onkeydown="if (event.key === \'Enter\') connectTrulyInbox()">' +
-      '<button class="btn btn-secondary btn-sm" id="trulyinbox-go" onclick="connectTrulyInbox()">Connect</button>' +
+        'rel="noopener">Get InboxWarm</a>' +
+      '<input class="form-input" id="inboxwarm-key" type="password" autocomplete="off" ' +
+        'placeholder="Paste your InboxWarm API key" aria-label="InboxWarm API key" ' +
+        'onkeydown="if (event.key === \'Enter\') connectInboxWarm()">' +
+      '<button class="btn btn-secondary btn-sm" id="inboxwarm-go" onclick="connectInboxWarm()">Connect</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="useOtherWarmup()">I use another service</button>' +
     '</div>';
 }
 
-async function connectTrulyInbox() {
-  const input = document.getElementById('trulyinbox-key');
-  const go = document.getElementById('trulyinbox-go');
+async function connectInboxWarm() {
+  const input = document.getElementById('inboxwarm-key');
+  const go = document.getElementById('inboxwarm-go');
   if (!input || !input.value.trim()) return;
   if (go) go.disabled = true;
-  const data = await api('/api/trulyinbox/connect', {
+  const data = await api('/api/inboxwarm/connect', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: input.value.trim()}),
   });
   if (go) go.disabled = false;
   if (data && data.success) {
     input.value = '';
-    showToast(data.message || 'TrulyInbox connected', 'success');
+    showToast(data.message || 'InboxWarm connected', 'success');
     loadSetupStatus();
   } else {
-    showToast((data && data.message) || 'Could not connect TrulyInbox', 'error');
+    showToast((data && data.message) || 'Could not connect InboxWarm', 'error');
   }
 }
 
@@ -1258,6 +1258,7 @@ async function loadSettings() {
   savedPh('imap-pass', data.imap_password_set, 'Same as SMTP password');
   document.getElementById('imap-same-pass').checked = !data.imap_password_set;
   savedPh('instantly-key', data.instantly_api_key_set, 'Enter your Instantly API key');
+  savedPh('emailverify-key', data.emailverify_api_key_set, 'Default verifier — app.emailverify.io/api-setup');
   savedPh('reoon-key', data.reoon_api_key_set, '600 free/mo — reoon.com/email-verifier');
   savedPh('zerobounce-key', data.zerobounce_api_key_set, '100 free/mo — best for M365/Workspace catch-alls');
   savedPh('hunter-key', data.hunter_api_key_set, '50 free/mo + email-pattern lookup');
@@ -1277,6 +1278,7 @@ async function loadSettings() {
     else if (data.m365_client_id) { m.className = 'email-tag risky'; m.textContent = 'run: harvey microsoft auth'; }
     else { m.className = 'email-tag guess'; m.textContent = 'not set up'; }
   }
+  tag('emailverify-status', data.emailverify_api_key_set, 'set');
   tag('reoon-status', data.reoon_api_key_set, 'set');
   tag('zerobounce-status', data.zerobounce_api_key_set, 'set');
   tag('hunter-status', data.hunter_api_key_set, 'set');
@@ -1318,9 +1320,11 @@ function saveMicrosoft() {
 
 function saveVerifiers() {
   const payload = {};
+  const ev = document.getElementById('emailverify-key').value;
   const r = document.getElementById('reoon-key').value;
   const z = document.getElementById('zerobounce-key').value;
   const h = document.getElementById('hunter-key').value;
+  if (ev) payload.EMAILVERIFY_API_KEY = ev;
   if (r) payload.REOON_API_KEY = r;
   if (z) payload.ZEROBOUNCE_API_KEY = z;
   if (h) payload.HUNTER_API_KEY = h;

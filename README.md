@@ -111,7 +111,8 @@ Profiling and outbox draining ride along on **every** cycle regardless, because 
 - **Python 3.11+** — check with `python3 --version`. macOS ships 3.9; if that's what you have, `brew install python@3.13` first.
 - An active **Claude Pro or Max** subscription, with the CLI logged in (`claude login`) — or, opt-in, a **ChatGPT plan with the Codex CLI** ([see below](#using-a-chatgpt-plan-instead-codex))
 - A mailbox to send from — Gmail/Workspace recommended, on a *dedicated secondary domain*. Microsoft 365 works too ([setup](docs/microsoft365.md))
-- A warmup service on that mailbox — we recommend [TrulyInbox](https://trulyinbox.com/?via=harvey). It warms a new mailbox before cold email, keeps it out of spam after, and Harvey reads its inbox rate to tell you when you're ready ([Warmup](#warmup-with-trulyinbox))
+- A warmup service on that mailbox — we recommend [InboxWarm](https://inboxwarm.ai/). It warms a new mailbox before cold email, keeps it out of spam after, and Harvey reads its inbox rate to tell you when you're ready ([Warmup](#warmup-with-inboxwarm))
+- An email verifier — we recommend [EmailVerify.io](https://emailverify.io/) (`EMAILVERIFY_API_KEY`, from [API setup](https://app.emailverify.io/api-setup)). Without one, found addresses stay `guess` and are never sent
 
 ### Easiest: let Claude set it up
 
@@ -347,7 +348,7 @@ A site behind a bot challenge (SiteGround's "sgcaptcha", Cloudflare's "Just a mo
 
 Harvey learns each company's **address pattern** and verifies one candidate, rather than brute-forcing name variations. Any address the site publishes can teach it: `nvale@` next to Nora Vale is `{first initial}{last}`, and `j.smith@` is an initial and surname. A lone dotless address no named person owns (`kmorrow@`: Kmorrow, or K. Morrow?) is ambiguous and teaches nothing. An address two named people could own (`jsmith@` when John and Jane Smith both work there) is format evidence only, and Harvey never guesses or verifies an address another named person could own: a verifier would confirm *their* mailbox. It decodes the usual hiding tricks (Cloudflare email protection, a mail link's `data-user`/`data-domain` attributes, `name [at] domain [dot] com`) and never invents an address from ordinary text. A person's own published address is used as is. With no evidence at all, it guesses `first.last@`, or `first@` when something besides the website says the company is small (your ICP's company size, or a local-business listing as its source). A cached guess never stops a real address or a Hunter lookup from replacing it, and Hunter is asked once per domain (a timeout or rate limit doesn't count). Raw SMTP probing is not viable from a laptop — outbound port 25 is usually blocked, and Google Workspace and Microsoft 365 accept everything from an unknown IP.
 
-Every address is tagged honestly: `verified` / `risky` (catch-all) / `guess` / `invalid`. **Only deliverable ones are ever sent to.** A guess is never treated as a win.
+Verification runs through [EmailVerify.io](https://emailverify.io/) first (`EMAILVERIFY_API_KEY`); ZeroBounce, Reoon and Hunter are optional fallbacks used only when it isn't set or can't decide (a catch-all they can settle, or an unknown). Every address is tagged honestly: `verified` / `risky` (catch-all) / `guess` / `invalid`. **Only deliverable ones are ever sent to.** A guess is never treated as a win.
 
 > Harvey is worth running even if you never let it send. `harvey export` writes a sequencer-ready CSV of everything it found.
 
@@ -636,7 +637,8 @@ harvey export                # deliverable prospects → CSV
 harvey companies             # company register → CSV: every company, fit, and why it wasn't contacted
 harvey sending pause|resume  # kill switch
 harvey warmup [domain]       # is the sending domain ready? (SPF/DKIM/DMARC, age, blocklists, warmup)
-harvey trulyinbox connect    # connect TrulyInbox so Harvey reads the mailbox's warmup
+harvey inboxwarm connect     # connect InboxWarm so Harvey reads the mailbox's warmup
+harvey trulyinbox connect    # fallback: connect TrulyInbox instead
 harvey retry-writes          # retry prospects the Writer gave up on
 harvey gmail auth            # one-time Gmail OAuth
 harvey microsoft auth|test  # one-time Microsoft 365 sign-in (docs/microsoft365.md)
@@ -708,30 +710,35 @@ your explicit choice.
 
 1. Buy a **dedicated sending domain** (`getacme.com`, not `acme.com`).
 2. Set up **SPF, DKIM and DMARC** on it. Without all three, Gmail junks you. `harvey warmup` checks them, plus domain age, blocklists, your warmup progress and bounce rate, and ends with READY / NOT READY. It only reads public DNS and Harvey's own records.
-3. **Warm up for 2–4 weeks** before real volume, and keep warmup running after. We recommend [TrulyInbox](https://trulyinbox.com/?via=harvey); see [Warmup with TrulyInbox](#warmup-with-trulyinbox).
+3. **Warm up for 2–4 weeks** before real volume, and keep warmup running after. We recommend [InboxWarm](https://inboxwarm.ai/); see [Warmup with InboxWarm](#warmup-with-inboxwarm).
 4. **Ramp slowly** — 10–20/day per inbox, adding ~5/day. The `max_daily_sends: 50` default is a ceiling, not a target. Set `channels.email.warmup.start_date` and Harvey does this for you (Gmail, Microsoft, SMTP; Instantly has its own warmup): no cold email for `min_days`, then a cold-email cap that climbs by `daily_increase` a day. Replies always go out.
 5. **Watch bounces.** Above ~3%, stop and fix list quality. Harvey trips its own kill switch past your configured threshold.
 
 *None of this is legal advice. Sending at scale or into regulated industries? Talk to a lawyer.*
 
-### Warmup with TrulyInbox
+### Warmup with InboxWarm
 
 Whether a mailbox is warmed isn't something DNS can tell you: only the warmup
-service sees where its mail lands. We recommend [TrulyInbox](https://trulyinbox.com/?via=harvey), and Harvey
+service sees where its mail lands. We recommend [InboxWarm](https://inboxwarm.ai/), and Harvey
 connects to it so `harvey warmup` can say whether your mailbox is actually ready:
 
-1. **Get TrulyInbox** at [trulyinbox.com](https://trulyinbox.com/?via=harvey) and add your sending mailbox.
-   Connecting Harvey needs API access, which starts on the Starter plan.
-2. **Create a key.** In TrulyInbox, open Settings > API keys and create a
-   workspace key with `accounts:read`, `warmup:read`, `analytics:read` and
-   `workspace:read`.
-3. **Connect it**: `harvey trulyinbox connect`, or paste it into the warmup step
-   on the dashboard's Today page. Harvey checks the key before saving it to `.env`.
+1. **Get InboxWarm** at [inboxwarm.ai](https://inboxwarm.ai/) and connect your sending mailbox.
+   API access is included on every plan.
+2. **Copy your API key** from the [Developer Kit](https://app.inboxwarm.ai/developer-kit).
+3. **Connect it**: `harvey inboxwarm connect`, or paste it into the warmup step
+   on the dashboard's Today page. Harvey checks the key before saving it to `.env`
+   as `INBOXWARM_API_KEY`.
 
-`harvey warmup` then reads the mailbox from TrulyInbox and calls it ready only
-when it's enrolled, signed in, has warmed for `min_days` (14 by default), and
-less than 5% of its warmup mail landed in spam. Harvey only reads: it never
-enrolls, pauses or changes anything in your TrulyInbox account.
+`harvey warmup` then reads the mailbox from InboxWarm and calls it ready only
+when it's connected, signed in, warming, has warmed for `min_days` (14 by
+default, counted from the day the mailbox was added to InboxWarm), and less
+than 5% of its warmup mail over the last 14 days landed in spam. Harvey only
+reads: it never connects, starts, stops or deletes anything in your InboxWarm account.
+
+**TrulyInbox as a fallback.** A [TrulyInbox](https://trulyinbox.com/?via=harvey) key still works:
+`harvey trulyinbox connect` (API access starts on its Starter plan; the key needs
+`accounts:read`, `warmup:read`, `analytics:read` and `workspace:read`). When both
+keys are set, InboxWarm wins.
 
 Already warming with another service? `harvey trulyinbox other` (or *I use
 another service* on the dashboard) and Harvey stops suggesting it.
@@ -758,7 +765,7 @@ another service* on the dashboard) and Harvey stops suggesting it.
 
 **Overpass is throttling** — It's free volunteer infrastructure. Harvey walks three mirrors before giving up. Wait a few minutes, or use a paid provider for bulk work.
 
-**Emails land in spam** — Almost always the domain, not the copy. Check SPF/DKIM/DMARC, confirm warmup ran ([TrulyInbox](https://trulyinbox.com/?via=harvey) shows the inbox rate; `harvey warmup` reads it once connected), halve your volume.
+**Emails land in spam** — Almost always the domain, not the copy. Check SPF/DKIM/DMARC, confirm warmup ran ([InboxWarm](https://inboxwarm.ai/) shows the inbox rate; `harvey warmup` reads it once connected), halve your volume.
 
 **Harvey does nothing during the day** — Check `quiet_hours` and whether it hit `max_daily_claude_percent`. `harvey status` shows current state; the `actions` table logs every decision.
 

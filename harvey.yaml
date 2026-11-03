@@ -60,9 +60,10 @@ channels:
     # start_sends by daily_increase a day up to max_daily_sends. Replies are
     # never held. Gmail/Microsoft/SMTP only (Instantly has its own warmup).
     # Check readiness any time with `harvey warmup`.
-    # We recommend TrulyInbox for warmup: https://trulyinbox.com/?via=harvey
-    # Connect it (`harvey trulyinbox connect`) and `harvey warmup` reads
-    # whether this mailbox is actually warmed.
+    # We recommend InboxWarm for warmup: https://inboxwarm.ai/
+    # Connect it (`harvey inboxwarm connect`) and `harvey warmup` reads
+    # whether this mailbox is actually warmed. TrulyInbox still works as a
+    # fallback: https://trulyinbox.com/?via=harvey (`harvey trulyinbox connect`).
     warmup:
       start_date: ""            # YYYY-MM-DD; blank = no ramp
       min_days: 14

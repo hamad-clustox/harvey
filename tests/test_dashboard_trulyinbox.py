@@ -4,6 +4,7 @@ use another service. Either answer completes the step, so nobody is asked twice.
 import pytest
 
 import harvey.dashboard as dash
+from harvey.integrations import inboxwarm as iw
 from harvey.integrations import trulyinbox as ti
 from tests.test_dashboard_live_status import client, env  # noqa: F401  (fixtures)
 
@@ -17,12 +18,14 @@ def _step(client):
 def _no_key(monkeypatch):
     monkeypatch.delenv("TRULYINBOX_API_KEY", raising=False)
     monkeypatch.delenv("TRULYINBOX_WORKSPACE_ID", raising=False)
+    monkeypatch.delenv("INBOXWARM_API_KEY", raising=False)
 
 
 def test_the_step_starts_open_with_the_link(client):
     step = _step(client)
     assert not step["done"] and step["required"]
-    assert step["link"] == ti.AFFILIATE_URL
+    # InboxWarm (a Clustox product) is the recommended warmup service now.
+    assert step["link"] == iw.SIGNUP_URL
 
 
 def test_another_service_completes_the_step(client):
@@ -75,4 +78,4 @@ def test_connect_without_a_sending_address_is_refused(client, monkeypatch):
 def test_the_step_is_optional_on_instantly(client, monkeypatch):
     monkeypatch.setattr(dash, "_current_provider", lambda: "instantly")
     step = _step(client)
-    assert not step["required"] and step["link"] == ti.AFFILIATE_URL
+    assert not step["required"] and step["link"] == iw.SIGNUP_URL
