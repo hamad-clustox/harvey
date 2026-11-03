@@ -98,7 +98,10 @@ def park(con, ids, why: str):
     con.commit()
 
 
-def discover(since: str) -> list[dict]:
+def discover() -> list[dict]:
+    """Run the searches and return only companies this run added."""
+    with db() as con:
+        known = {r[0] for r in con.execute("SELECT id FROM companies")}
     for preset in PRESETS:
         r = subprocess.run(
             [sys.executable, "-m", "harvey", "discover", "--provider", "tinyfish",
@@ -107,9 +110,11 @@ def discover(since: str) -> list[dict]:
         tail = [l for l in r.stdout.splitlines() if l.strip()][-6:]
         log.info("discover %s (exit %s): %s", preset, r.returncode, " | ".join(tail))
     with db() as con:
+        # New rows only, and never one a contacts pass has already looked at.
         rows = [dict(r) for r in con.execute(
             "SELECT id, name, domain, source_url, industry FROM companies "
-            "WHERE created_at >= ? AND domain != ''", (since,))]
+            "WHERE domain != '' AND prospects_checked_at IS NULL")
+            if r["id"] not in known]
         for r in rows:
             label = clean_industry(r["industry"])
             if label != r["industry"]:
@@ -287,7 +292,7 @@ async def main():
     t0 = time.time()
     summary = {"started": started}
 
-    rows = discover(started)
+    rows = discover()
     summary["discovered"] = len(rows)
     junk = [r for r in rows if rule_junk(r)]
     rest = [r for r in rows if not rule_junk(r)]
